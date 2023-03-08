@@ -49,9 +49,12 @@ class MultiHeadAttention(nn.Module):
     def __init__(self, num_heads, head_size):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.projection = nn.Linear(n_emb_dims, n_emb_dims)
 
     def forward(self, x):
-        return torch.cat([h(x) for h in self.heads], dim=-1)
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.projection(out)
+        return out
 
 
 class FeedForward(nn.Module):
@@ -60,12 +63,29 @@ class FeedForward(nn.Module):
     def __init__(self, n_embed_dims):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_embed_dims, n_embed_dims),
-            nn.ReLU()
+            nn.Linear(n_embed_dims, 4 * n_embed_dims),
+            nn.ReLU(),
+            nn.Linear(4 * n_embed_dims, n_embed_dims)
         )
 
     def forward(self, x):
         return self.net(x)
+
+
+class TransformerBlock(nn.Module):
+    """Intersperse communication and computation between tokens."""
+
+    def __init__(self, n_embed_dims, n_heads):
+        super().__init__()
+
+        head_size = n_embed_dims // n_heads
+        self.sa = MultiHeadAttention(n_heads, head_size)
+        self.ffwd = FeedForward(n_emb_dims)
+
+    def forward(self, x):
+        x = x + self.sa(x)     # the += makes a residual pathway to help with
+        x = x + self.ffwd(x)   # convergence, given our deep architecture
+        return x
 
 
 class BigramLanguageModel(nn.Module):
@@ -75,8 +95,11 @@ class BigramLanguageModel(nn.Module):
         self.token_embedding_table = nn.Embedding(vocab_size, n_emb_dims)
         self.position_embedding_table = nn.Embedding(block_size, n_emb_dims)
 
-        self.self_att_heads = MultiHeadAttention(4, n_emb_dims//4)
-        self.feed_fwd = FeedForward(n_emb_dims)
+        self.blocks = nn.Sequential(
+            TransformerBlock(n_emb_dims,n_heads=4),
+            TransformerBlock(n_emb_dims,n_heads=4),
+            TransformerBlock(n_emb_dims,n_heads=4),
+        )
         self.lang_model_head = nn.Linear(n_emb_dims, vocab_size)
 
     def forward(self, idx, targets=None):
@@ -88,8 +111,7 @@ class BigramLanguageModel(nn.Module):
         token_embs = self.token_embedding_table(idx) # (B, T, C)
         pos_embs = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
         x = token_embs + pos_embs # gets broadcasted together (B,T,C)
-        x = self.self_att_heads(x) # apply many heads of self-attention. (B,T,C)
-        x = self.feed_fwd(x) # (B,T,C)
+        x = self.blocks(x) # apply transformer blocks (B,T,C)
         logits = self.lang_model_head(x) # (B, T, vocab_size)
         loss = None
 
