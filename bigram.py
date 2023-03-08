@@ -46,3 +46,63 @@ def get_batch(split: str):
     y = torch.stack([data[i+1:i+block_size+1] for i in block_inds])
 
     return x.to(device), y.to(device)
+
+@torch.no_grad()
+def estimate_loss():
+    out = {}
+    model.eval()
+    for split in ['train','val']:
+        losses = torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            X, Y = get_batch(split)
+            logits, loss = model(X, Y)
+            losses[k] = loss.item()
+        out[split] = losses.mean()
+    model.train()
+    return out
+
+class BigramLanguageModel(nn.Module):
+
+    def __init__(self, vocab_size):
+        super().__init__()
+        self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
+    
+    def forward(self, idx, targets=None):
+        """ Forward pass through Model.
+            idx and target are (B, T) tensors of integers.
+        """
+        # Get (B, T, C) tensor of logits
+        logits = self.token_embedding_table(idx)
+        loss = None
+
+        if targets is not None:
+            B, T, C = logits.shape
+            # Re-shape to feed into cross_entropy
+            logits = logits.view(B*T, C)
+            targets = targets.view(B*T)
+            loss = F.cross_entropy(logits, targets)
+
+        return logits, loss
+    
+    def generate(self, idx, max_new_tokens):
+        """ Generate new text from context idx.
+            idx is (B, T) array of indices in current context.
+        """
+        for _ in range(max_new_tokens):
+            logits, loss = self.__call__(idx) # identical to self(idx)
+            # focus on only last time step
+            logits = logits[:, -1, :]
+            # get probabilities
+            probs = F.softmax(logits, dim=-1) # -1 = figure it out pytorch
+            
+            # generate 1 character
+            idx_next = torch.multinomial(probs, num_samples=1)
+
+            idx = torch.cat((idx, idx_next), dim=1)
+        return idx
+
+model = BigramLanguageModel(vocab_size)
+m = model.to(device)
+
+optimizer = torch.optim.AdamW(model.parameters(), learning_rate)
+
