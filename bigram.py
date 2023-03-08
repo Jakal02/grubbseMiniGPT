@@ -54,6 +54,20 @@ class MultiHeadAttention(nn.Module):
         return torch.cat([h(x) for h in self.heads], dim=-1)
 
 
+class FeedForward(nn.Module):
+    """Feed Forward. Linear layer then non-linear transformation."""
+
+    def __init__(self, n_embed_dims):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embed_dims, n_embed_dims),
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
 class BigramLanguageModel(nn.Module):
 
     def __init__(self):
@@ -61,7 +75,8 @@ class BigramLanguageModel(nn.Module):
         self.token_embedding_table = nn.Embedding(vocab_size, n_emb_dims)
         self.position_embedding_table = nn.Embedding(block_size, n_emb_dims)
 
-        self. self_att_heads = MultiHeadAttention(4, n_emb_dims//4)
+        self.self_att_heads = MultiHeadAttention(4, n_emb_dims//4)
+        self.feed_fwd = FeedForward(n_emb_dims)
         self.lang_model_head = nn.Linear(n_emb_dims, vocab_size)
 
     def forward(self, idx, targets=None):
@@ -74,6 +89,7 @@ class BigramLanguageModel(nn.Module):
         pos_embs = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
         x = token_embs + pos_embs # gets broadcasted together (B,T,C)
         x = self.self_att_heads(x) # apply many heads of self-attention. (B,T,C)
+        x = self.feed_fwd(x) # (B,T,C)
         logits = self.lang_model_head(x) # (B, T, vocab_size)
         loss = None
 
@@ -181,5 +197,5 @@ if __name__ == "__main__":
     # generate from model
     context = torch.zeros([1,1], dtype=torch.long, device=device)
     context = torch.tensor([encode("What! You ")], dtype=torch.long, device=device)
-    print(decode(m.generate(context, max_new_tokens=100)[0].tolist()))
+    print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
 
