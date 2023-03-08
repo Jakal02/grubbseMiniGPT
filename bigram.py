@@ -6,8 +6,8 @@ from torch.nn import functional as F
 seed = 1337
 batch_size = 32
 block_size = 8
-max_iters = 1000
-eval_interval = 300
+max_iters = 10000
+eval_every = 1000
 eval_iters = 200
 learning_rate = 1e-3
 device = 'cpu'
@@ -17,7 +17,7 @@ device = 'cpu'
 torch.manual_seed(seed)
 
 # Read Text
-with open('tinyshakespear.txt', 'r', encoding='utf-8') as f:
+with open('tinyshakespeare.txt', 'r', encoding='utf-8') as f:
     text = f.read()
 
 # Define Vocab
@@ -46,20 +46,6 @@ def get_batch(split: str):
     y = torch.stack([data[i+1:i+block_size+1] for i in block_inds])
 
     return x.to(device), y.to(device)
-
-@torch.no_grad()
-def estimate_loss():
-    out = {}
-    model.eval()
-    for split in ['train','val']:
-        losses = torch.zeros(eval_iters)
-        for k in range(eval_iters):
-            X, Y = get_batch(split)
-            logits, loss = model(X, Y)
-            losses[k] = loss.item()
-        out[split] = losses.mean()
-    model.train()
-    return out
 
 class BigramLanguageModel(nn.Module):
 
@@ -100,9 +86,46 @@ class BigramLanguageModel(nn.Module):
 
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
+    
+@torch.no_grad()
+def estimate_loss(model:BigramLanguageModel):
+    out = {}
+    model.eval()
+    for split in ['train','val']:
+        losses = torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            X, Y = get_batch(split)
+            logits, loss = model(X, Y)
+            losses[k] = loss.item()
+        out[split] = losses.mean()
+    model.train()
+    return out
+
+#------------------
 
 model = BigramLanguageModel(vocab_size)
 m = model.to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), learning_rate)
+
+for iter in range(max_iters):
+
+    if iter % eval_every == 0:
+        losses = estimate_loss(model)
+        print(f"step {iter}: "
+              f"train loss {losses['train']:.4f}, "
+              f"val loss {losses['val']:.4f}")
+    
+    # sample training batch
+    x_batch, y_batch = get_batch('train')
+
+    # eval loss
+    logits, loss = model(x_batch, y_batch)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
+
+# generate from model
+context = torch.zeros([1,1], dtype=torch.long, device=device)
+print(decode(m.generate(context, max_new_tokens=20)[0].tolist()))
 
