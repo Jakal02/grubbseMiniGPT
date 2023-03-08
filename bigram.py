@@ -6,8 +6,8 @@ from torch.nn import functional as F
 seed = 1337
 batch_size = 32
 block_size = 8
-max_iters = 10000
-eval_every = 1000
+max_iters = 5000
+eval_every = 500
 eval_iters = 200
 learning_rate = 1e-3
 device = 'cpu'
@@ -16,21 +16,53 @@ n_emb_dims = 32
 torch.manual_seed(seed)
 # ---------------
 
+class Head(nn.Module):
+    """Singular self-attention head."""
+
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_emb_dims, head_size, bias=False)
+        self.query = nn.Linear(n_emb_dims, head_size, bias=False)
+        self.value = nn.Linear(n_emb_dims, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+    def forward(self, x):
+        B, T, C = x.shape
+        k = self.key(x)     # (B,T,C)
+        q = self.query(x)   # (B,T,C)
+
+        # compute attention scores
+        weights = q @ k.transpose(-2, -1) * (C**-0.5) # (B,T,C) @ (B,C,T) -> (B,T,T)
+        weights = weights.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B,T,T)
+        weights = F.softmax(weights, dim=-1) # (B,T,T)
+
+        # perform weighted aggregation of values
+        v = self.value(x) # (B,T,C)
+        out = weights @ v # (B,T,T) @ (B,T,C) -> (B,T,C)
+        return out
+
 
 class BigramLanguageModel(nn.Module):
 
-    def __init__(self, vocab_size):
+    def __init__(self):
         super().__init__()
         self.token_embedding_table = nn.Embedding(vocab_size, n_emb_dims)
+        self.position_embedding_table = nn.Embedding(block_size, n_emb_dims)
+
+        self. self_att_head = Head(n_emb_dims)
         self.lang_model_head = nn.Linear(n_emb_dims, vocab_size)
 
     def forward(self, idx, targets=None):
         """ Forward pass through Model.
             idx and target are (B, T) tensors of integers.
         """
+        B, T = idx.shape
         # Get (B, T, C) tensor of logits
         token_embs = self.token_embedding_table(idx) # (B, T, C)
-        logits = self.lang_model_head(token_embs) # (B, T, vocab_size)
+        pos_embs = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
+        x = token_embs + pos_embs # gets broadcasted together (B,T,C)
+        x = self.self_att_head(x) # apply 1 head of self-attention. (B,T,C)
+        logits = self.lang_model_head(x) # (B, T, vocab_size)
         loss = None
 
         if targets is not None:
@@ -47,7 +79,10 @@ class BigramLanguageModel(nn.Module):
             idx is (B, T) array of indices in current context.
         """
         for _ in range(max_new_tokens):
-            logits, loss = self.__call__(idx) # identical to self(idx)
+            # crop context to ensure its <= block_size
+            idx_cond = idx[:, -block_size:]
+
+            logits, loss = self.__call__(idx_cond) # identical to self(idx)
             # focus on only last time step
             logits = logits[:, -1, :]
             # get probabilities
@@ -108,7 +143,7 @@ if __name__ == "__main__":
 
     #-------------------
 
-    model = BigramLanguageModel(vocab_size)
+    model = BigramLanguageModel()
     m = model.to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), learning_rate)
