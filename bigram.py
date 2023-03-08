@@ -5,13 +5,19 @@ from torch.nn import functional as F
 # Hyperparameters
 seed = 1337
 batch_size = 32
-block_size = 8
+block_size = 128
+
 max_iters = 5000
 eval_every = 500
 eval_iters = 200
-learning_rate = 1e-3
+
+learning_rate = 3e-4
 device = 'cpu'
-n_emb_dims = 32
+
+n_emb_dims = 128
+n_heads = 4
+n_transformer_layers = 4
+dropout_prob = 0.2
 # Reproducibility
 torch.manual_seed(seed)
 # ---------------
@@ -26,6 +32,8 @@ class Head(nn.Module):
         self.value = nn.Linear(n_emb_dims, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
 
+        self.dropout = nn.Dropout(dropout_prob)
+
     def forward(self, x):
         B, T, C = x.shape
         k = self.key(x)     # (B,T,C)
@@ -35,6 +43,7 @@ class Head(nn.Module):
         weights = q @ k.transpose(-2, -1) * (C**-0.5) # (B,T,C) @ (B,C,T) -> (B,T,T)
         weights = weights.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B,T,T)
         weights = F.softmax(weights, dim=-1) # (B,T,T)
+        weights = self.dropout(weights)
 
         # perform weighted aggregation of values
         v = self.value(x) # (B,T,C)
@@ -50,10 +59,12 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
         self.projection = nn.Linear(n_emb_dims, n_emb_dims)
+        self.dropout = nn.Dropout(dropout_prob)
 
     def forward(self, x):
         out = torch.cat([h(x) for h in self.heads], dim=-1)
         out = self.projection(out)
+        out = self.dropout(out)
         return out
 
 
@@ -65,7 +76,8 @@ class FeedForward(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(n_embed_dims, 4 * n_embed_dims),
             nn.ReLU(),
-            nn.Linear(4 * n_embed_dims, n_embed_dims)
+            nn.Linear(4 * n_embed_dims, n_embed_dims),
+            nn.Dropout(dropout_prob)
         )
 
     def forward(self, x):
@@ -80,11 +92,16 @@ class TransformerBlock(nn.Module):
 
         head_size = n_embed_dims // n_heads
         self.sa = MultiHeadAttention(n_heads, head_size)
-        self.ffwd = FeedForward(n_emb_dims)
+        self.ffwd = FeedForward(n_embed_dims)
+        self.layer_norm_1 = nn.LayerNorm(n_embed_dims)
+        self.layer_norm_2 = nn.LayerNorm(n_embed_dims)
 
     def forward(self, x):
-        x = x + self.sa(x)     # the += makes a residual pathway to help with
-        x = x + self.ffwd(x)   # convergence, given our deep architecture
+        """Forward pass through transformer architecture.
+        Includes residual pathways and pre-norm formulation.
+        """
+        x = x + self.sa(self.layer_norm_1(x))     # the += makes a residual pathway to help with
+        x = x + self.ffwd(self.layer_norm_2(x))   # convergence, given our deep architecture
         return x
 
 
@@ -95,11 +112,9 @@ class BigramLanguageModel(nn.Module):
         self.token_embedding_table = nn.Embedding(vocab_size, n_emb_dims)
         self.position_embedding_table = nn.Embedding(block_size, n_emb_dims)
 
-        self.blocks = nn.Sequential(
-            TransformerBlock(n_emb_dims,n_heads=4),
-            TransformerBlock(n_emb_dims,n_heads=4),
-            TransformerBlock(n_emb_dims,n_heads=4),
-        )
+        self.blocks = nn.Sequential(*[TransformerBlock(n_emb_dims,n_heads=n_heads) 
+                                      for _ in range(n_transformer_layers)])
+        self.layer_norm = nn.LayerNorm(n_emb_dims)
         self.lang_model_head = nn.Linear(n_emb_dims, vocab_size)
 
     def forward(self, idx, targets=None):
@@ -111,7 +126,9 @@ class BigramLanguageModel(nn.Module):
         token_embs = self.token_embedding_table(idx) # (B, T, C)
         pos_embs = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
         x = token_embs + pos_embs # gets broadcasted together (B,T,C)
+
         x = self.blocks(x) # apply transformer blocks (B,T,C)
+        x = self.layer_norm(x) # (B,T,C)
         logits = self.lang_model_head(x) # (B, T, vocab_size)
         loss = None
 
