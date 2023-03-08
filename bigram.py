@@ -11,6 +11,7 @@ eval_every = 1000
 eval_iters = 200
 learning_rate = 1e-3
 device = 'cpu'
+n_emb_dims = 32
 # Reproducibility
 torch.manual_seed(seed)
 # ---------------
@@ -20,14 +21,16 @@ class BigramLanguageModel(nn.Module):
 
     def __init__(self, vocab_size):
         super().__init__()
-        self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
+        self.token_embedding_table = nn.Embedding(vocab_size, n_emb_dims)
+        self.lang_model_head = nn.Linear(n_emb_dims, vocab_size)
     
     def forward(self, idx, targets=None):
         """ Forward pass through Model.
             idx and target are (B, T) tensors of integers.
         """
         # Get (B, T, C) tensor of logits
-        logits = self.token_embedding_table(idx)
+        token_embs = self.token_embedding_table(idx) # (B, T, C)
+        logits = self.lang_model_head(token_embs) # (B, T, vocab_size)
         loss = None
 
         if targets is not None:
