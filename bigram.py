@@ -213,6 +213,8 @@ if __name__ == "__main__":
     model = BigramLanguageModel()
     m = model.to(device)
 
+    print(sum(p.numel() for p in m.parameters())/1e6, "M Parameters")
+
     optimizer = torch.optim.AdamW(model.parameters(), learning_rate)
 
     # Training Loop
@@ -235,6 +237,6 @@ if __name__ == "__main__":
 
     # generate from model
     context = torch.zeros([1,1], dtype=torch.long, device=device)
-    context = torch.tensor([encode("What! You ")], dtype=torch.long, device=device)
+    # context = torch.tensor([encode("What! You ")], dtype=torch.long, device=device)
     print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
 
