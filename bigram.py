@@ -23,7 +23,7 @@ class BigramLanguageModel(nn.Module):
         super().__init__()
         self.token_embedding_table = nn.Embedding(vocab_size, n_emb_dims)
         self.lang_model_head = nn.Linear(n_emb_dims, vocab_size)
-    
+
     def forward(self, idx, targets=None):
         """ Forward pass through Model.
             idx and target are (B, T) tensors of integers.
@@ -41,7 +41,7 @@ class BigramLanguageModel(nn.Module):
             loss = F.cross_entropy(logits, targets)
 
         return logits, loss
-    
+
     def generate(self, idx, max_new_tokens):
         """ Generate new text from context idx.
             idx is (B, T) array of indices in current context.
@@ -52,7 +52,7 @@ class BigramLanguageModel(nn.Module):
             logits = logits[:, -1, :]
             # get probabilities
             probs = F.softmax(logits, dim=-1) # -1 = figure it out pytorch
-            
+
             # generate 1 character
             idx_next = torch.multinomial(probs, num_samples=1)
 
@@ -133,5 +133,6 @@ if __name__ == "__main__":
 
     # generate from model
     context = torch.zeros([1,1], dtype=torch.long, device=device)
+    context = torch.tensor([encode("What! You ")], dtype=torch.long, device=device)
     print(decode(m.generate(context, max_new_tokens=100)[0].tolist()))
 
