@@ -240,3 +240,5 @@ if __name__ == "__main__":
     # context = torch.tensor([encode("What! You ")], dtype=torch.long, device=device)
     print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
 
+    torch.save(model.state_dict(), "macGPT.pth")
+
