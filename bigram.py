@@ -107,7 +107,7 @@ class TransformerBlock(nn.Module):
 
 class BigramLanguageModel(nn.Module):
 
-    def __init__(self):
+    def __init__(self, vocab_size):
         super().__init__()
         self.token_embedding_table = nn.Embedding(vocab_size, n_emb_dims)
         self.position_embedding_table = nn.Embedding(block_size, n_emb_dims)
@@ -210,7 +210,7 @@ if __name__ == "__main__":
 
     #-------------------
 
-    model = BigramLanguageModel()
+    model = BigramLanguageModel(vocab_size, n_emb_dims)
     m = model.to(device)
 
     print(sum(p.numel() for p in m.parameters())/1e6, "M Parameters")
@@ -240,5 +240,5 @@ if __name__ == "__main__":
     # context = torch.tensor([encode("What! You ")], dtype=torch.long, device=device)
     print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
 
-    torch.save(model.state_dict(), "macGPT.pth")
+    torch.save(model.state_dict(), "trained_models/macGPT.pth")
 
